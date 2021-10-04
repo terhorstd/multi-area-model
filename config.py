@@ -1,12 +1,13 @@
+import os
 # Absolute path of repository
-base_path = None
+base_path = os.path.abspath(".")
 # Place to store simulations
-data_path = None
+data_path = os.path.abspath("simulations")
 # Template for job scripts
 jobscript_template = '''
 # Instruction for the queuing system
 
-mpirun python {base_path}/run_simulation.py {label}'''
+python {base_path}/run_simulation.py {label}'''
 
 """
 Here is an example for the Slurm queueing system:
@@ -24,4 +25,4 @@ Here is an example for the Slurm queueing system:
 """
 
 # Command to submit jobs on the local cluster
-submit_cmd = None
+submit_cmd = "bash -c"

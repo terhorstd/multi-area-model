@@ -53,7 +53,10 @@ def compute_Model_params(out_label='', mode='default'):
          is the string defined in `out_label`.
     """
     basepath = os.path.abspath(os.path.join(os.path.dirname(__file__)))
-
+    print("Model data base path: %s" % basepath)
+    if basepath is None:
+        basepath = "/opt/app-root/src/multi-area-model/multiarea_model/data_multiarea"
+        print("Replacing base path with: %s" % basepath)
     # Load and process raw data
     process_raw_data()
     raw_fn = os.path.join(basepath, 'viscortex_raw_data.json')
