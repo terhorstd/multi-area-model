@@ -1318,6 +1318,7 @@ def process_raw_data():
 
     # Call R script to perform SLN fit
     try:
+        raise OSError("do not use R here")
         proc = subprocess.Popen(["Rscript",
                                  os.path.join(basepath, 'SLN_logdensities.R'),
                                  base_path],
