@@ -343,10 +343,9 @@ class Simulation:
                                'network_gids.txt'), 'w') as f:
             for area in self.areas:
                 for pop in self.network.structure[area.name]:
-                    f.write("{area},{pop},{g0},{g1}\n".format(area=area.name,
+                    f.write("{area},{pop},{gids}\n".format(area=area.name,
                                                               pop=pop,
-                                                              g0=area.gids[pop][0],
-                                                              g1=area.gids[pop][1]))
+                                                              gids=area.gids[pop]))
 
     def register_runtime(self):
         if sumatra_found:
@@ -440,7 +439,7 @@ class Area:
             gid.I_e = I_e
 
             # Store first and last GID of each population
-            self.gids[pop] = (gid[0], gid[-1])
+            self.gids[pop] = gid
 
             # Initialize membrane potentials
             # This could also be done after creating all areas, which
@@ -454,6 +453,7 @@ class Area:
                 mean = self.network.params['neuron_params']['V0_mean'],
                 std = self.network.params['neuron_params']['V0_sd'],
             )
+            self.num_local_nodes += len(local_nodes)
 
     def connect_populations(self):
         """
@@ -468,15 +468,13 @@ class Area:
             for pop in self.populations:
                 # Always record spikes from all neurons to get correct
                 # statistics
-                nest.Connect(tuple(range(self.gids[pop][0], self.gids[pop][1] + 1)),
-                             self.simulation.spike_recorder)
+                nest.Connect(self.gids[pop], self.simulation.spike_recorder)
 
         if self.simulation.params['recording_dict']['record_vm']:
             for pop in self.populations:
                 nrec = int(self.simulation.params['recording_dict']['Nrec_vm_fraction'] *
                            self.neuron_numbers[pop])
-                nest.Connect(self.simulation.multimeter,
-                             tuple(range(self.gids[pop][0], self.gids[pop][0] + nrec + 1)))
+                nest.Connect(self.simulation.multimeter, self.gids[pop][:nrec])
         if self.network.params['input_params']['poisson_input']:
             self.poisson_generators = []
             for pop in self.populations:
@@ -485,11 +483,8 @@ class Area:
                 pg = nest.Create('poisson_generator', 1,
                                  params={'rate': self.network.params['input_params']['rate_ext'] * K_ext})
                 syn_spec = {'weight': W_ext}
-                nest.Connect(pg,
-                             tuple(
-                                 range(self.gids[pop][0], self.gids[pop][1] + 1)),
-                             syn_spec=syn_spec)
-                self.poisson_generators.append(pg[0])
+                nest.Connect(pg, self.gids[pop], syn_spec=syn_spec)
+                self.poisson_generators.append(pg)
 
     def create_additional_input(self, input_type, source_area_name, cc_input):
         """
@@ -535,16 +530,10 @@ class Area:
                     curr_gen = nest.Create('step_current_generator', 1,
                                            params={'amplitude_values': K * cc_input[source_pop] * 1e-3,
                                                   'amplitude_times': np.arange(dt, T + dt, 1.)})
-                    nest.Connect(curr_gen,
-                                 tuple(
-                                     range(self.gids[pop][0], self.gids[pop][1] + 1)),
-                                 syn_spec=syn_spec)
+                    nest.Connect(curr_gen, self.gids[pop], syn_spec=syn_spec)
                 elif 'poisson_stat' in input_type:  # hom. and het. poisson lead here
                     pg = nest.Create('poisson_generator', 1, params={'rate': K * cc_input[source_pop]})
-                    nest.Connect(pg,
-                                 tuple(
-                                     range(self.gids[pop][0], self.gids[pop][1] + 1)),
-                                 syn_spec=syn_spec)
+                    nest.Connect(pg, self.gids[pop], syn_spec=syn_spec)
 
 
 def connect(simulation,
@@ -580,32 +569,41 @@ def connect(simulation,
             conn_spec = {'rule': 'fixed_total_number',
                          'N': int(synapses[target][source])}
 
-            syn_weight = {'distribution': 'normal_clipped',
-                          'mu': W[target][source],
-                          'sigma': W_sd[target][source]}
+            syn_weight_dist = nest.random.normal(
+                mean = W[target][source],
+                std = W_sd[target][source]
+            )
             if target_area == source_area:
                 if 'E' in source:
-                    syn_weight.update({'low': 0.})
+                    if W[target][source] < 0:  # this should be syn_weight_dist.mean
+                        print("WARNING: redraw-limit facing away from mean. redrawing will be slow!")
+                    syn_weight = nest.math.redraw(syn_weight_dist, min=0., max=9999999)
                     mean_delay = network.params['delay_params']['delay_e']
                 elif 'I' in source:
-                    syn_weight.update({'high': 0.})
+                    if W[target][source] > 0:  # this should be syn_weight_dist.mean
+                        print("WARNING: redraw-limit facing away from mean. redrawing will be slow!")
+                    syn_weight = nest.math.redraw(syn_weight_dist, min=-9999999, max=0.)
                     mean_delay = network.params['delay_params']['delay_i']
+                else:
+                    raise ValueError("unknown source population type '%s'" % source)
             else:
                 v = network.params['delay_params']['interarea_speed']
                 s = network.distances[target_area.name][source_area.name]
                 mean_delay = s / v
+                syn_weight = syn_weight_dist
 
-            syn_delay = {'distribution': 'normal_clipped',
-                         'low': simulation.params['dt'],
-                         'mu': mean_delay,
-                         'sigma': mean_delay * network.params['delay_params']['delay_rel']}
+            syn_delay = nest.math.redraw(
+                nest.random.normal(
+                    mean=mean_delay,
+                    std=mean_delay * network.params['delay_params']['delay_rel']
+                ),
+                min=simulation.params['dt'],
+                max=9999999
+            )
             syn_spec = {'weight': syn_weight,
                         'delay': syn_delay,
-                        'model': 'static_synapse'}
-
-            nest.Connect(tuple(range(source_area.gids[source][0],
-                                     source_area.gids[source][1] + 1)),
-                         tuple(range(target_area.gids[target][0],
-                                     target_area.gids[target][1] + 1)),
-                         conn_spec,
-                         syn_spec)
+                        'synapse_model': 'static_synapse'}
+            nest.Connect(source_area.gids[source],
+                         target_area.gids[target], 
+                         conn_spec=conn_spec,
+                         syn_spec=syn_spec)
