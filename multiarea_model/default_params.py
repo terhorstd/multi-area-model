@@ -37,7 +37,7 @@ Simulation parameters
 """
 sim_params = {
     # master seed for random number generators
-    'master_seed': 0,
+    'master_seed': 12345,
     # simulation step (in ms)
     'dt': 0.1,
     # simulated time (in ms)
